@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuronlab"
+version = "0.1.0"
+description = "Contrastive neuron finder, ablation and steering tool for LLMs"
+requires-python = ">=3.10"
+# Pinned to the versions the test suite was run against.
+dependencies = [
+  "torch>=2.14",
+  "transformers==5.16.1",
+  "huggingface-hub>=1.5,<2.0",
+  "accelerate>=1.0",
+  "numpy>=2.0",
+  "pandas>=2.2",
+  "plotly>=6.0",
+  "streamlit>=1.50",
+  "pyyaml>=6.0",
+  "tqdm>=4.66",
+  "pytest>=8.0",
+]
+
+[project.scripts]
+neuronlab = "neuronlab.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["neuronlab*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

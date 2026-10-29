@@ -1,0 +1,10 @@
+# NeuronLab configuration. NEURONLAB_MODEL_PATH overrides model_path.
+model_path: models/Qwen2.5-0.5B-Instruct
+device: auto          # auto | cuda | cpu
+dtype: bfloat16       # bfloat16 | float16 | float32 (statistics are always float32)
+runs_dir: runs
+batch_sizes:
+  record: 8
+  eval: 8
+  generate: 8
+  attribution: 2
