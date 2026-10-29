@@ -1,0 +1,56 @@
+name: aeroplane_vs_submarine
+mode: concept
+n_seed: 5
+system_prompt: null   # null = the tokenizer's default (Qwen: "You are Qwen, created by Alibaba Cloud. ...")
+positive:
+  - Explain how an aeroplane stays in the air.
+  - What does a pilot do during takeoff in an aeroplane?
+  - Describe the cockpit of a commercial aeroplane.
+  - Why do aeroplanes cruise at around 35,000 feet?
+  - What are the main parts of an aeroplane's wing?
+negative:
+  - Explain how a submarine stays underwater.
+  - What does a captain do when a submarine dives?
+  - Describe the control room of a military submarine.
+  - Why do submarines dive to great depths?
+  - What are the main parts of a submarine's hull?
+probes_positive:
+  - {prompt: "An aeroplane is lifted into the air by its", target: " wings"}
+  - {prompt: "The person who flies an aeroplane is called a", target: " pilot"}
+  - {prompt: "Aeroplanes take off and land at an", target: " airport"}
+  - {prompt: "The front section of an aeroplane where the pilot sits is the", target: " cockpit"}
+probes_negative:
+  - {prompt: "A submarine looks above the surface using a", target: " periscope"}
+  - {prompt: "To dive, a submarine fills its ballast tanks with", target: " water"}
+  - {prompt: "Submarines detect objects underwater using", target: " sonar"}
+  - {prompt: "A submarine travels under the", target: " sea"}
+# Never used by attribution, so evaluation on them is clean even when attribution drives the ranking.
+probes_positive_heldout:
+  - {prompt: "The long strip where an aeroplane lands is called a", target: " runway"}
+  - {prompt: "A person who travels on an aeroplane as a customer is called a", target: " passenger"}
+probes_negative_heldout:
+  - {prompt: "Sailors on a submarine live inside a pressurised steel", target: " hull"}
+  - {prompt: "A submarine fires a torpedo through a torpedo", target: " tube"}
+keywords: [aeroplane, airplane, plane, pilot, wing, flight, fly, cockpit, runway, airport]
+# Expansion: every frame is applied to every object on its side, so positive and negative stay matched.
+templates:
+  frames:
+    - "Explain how the {x} works."
+    - "What does the crew of the {x} do?"
+    - "Describe the interior of the {x}."
+    - "How is the {x} built?"
+    - "What are the main parts of the {x}?"
+    - "How fast can the {x} travel?"
+    - "How does the {x} navigate?"
+    - "What are the dangers of operating the {x}?"
+    - "How much does it cost to build the {x}?"
+    - "Tell me about the history of the {x}."
+    - "How is the {x} maintained?"
+    - "What training do you need to operate the {x}?"
+    - "How does the {x} communicate with others?"
+    - "What happens during an emergency on the {x}?"
+    - "Why is the {x} important?"
+  positive_slots:
+    x: [jet, aeroplane, airliner, glider, fighter jet, propeller plane]
+  negative_slots:
+    x: [submarine, nuclear submarine, U-boat, research submersible]

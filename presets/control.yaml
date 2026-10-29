@@ -1,0 +1,84 @@
+# Topic-neutral controls: generic prompts, plain paragraphs for perplexity, and general-knowledge probes.
+control:
+  - How do I boil an egg so the yolk stays soft?
+  - What is the difference between baking soda and baking powder?
+  - Give me a simple recipe for tomato soup.
+  - How long should I rest a steak after cooking?
+  - What is 17 multiplied by 23?
+  - Explain what a prime number is.
+  - How do I convert a fraction to a decimal?
+  - What is the Pythagorean theorem?
+  - "Solve for x: 3x + 7 = 22."
+  - What caused the fall of the Roman Empire?
+  - Who was Cleopatra?
+  - Summarize the main events of the French Revolution.
+  - What was the Silk Road used for?
+  - When did the printing press change Europe?
+  - Write a Python function that reverses a string.
+  - What is the difference between a list and a tuple in Python?
+  - Explain what a hash table is.
+  - How does a for loop work?
+  - What does the git commit command do?
+  - What causes rain?
+  - Why is the sky blue?
+  - What is the difference between weather and climate?
+  - How do clouds form?
+  - What should I wear on a cold windy day?
+  - What is the difference between "its" and "it's"?
+  - When should I use a semicolon?
+  - What is a past participle?
+  - Explain the difference between "affect" and "effect".
+  - How do I write a good topic sentence?
+  - How do I make a budget for the month?
+  - What is the best way to learn a new language?
+  - How can I improve my sleep?
+  - Explain how compound interest works.
+  - What is the purpose of a library?
+  - How do I keep houseplants alive?
+  - What is a metaphor?
+  - How do I tie a tie?
+  - What is the boiling point of water at sea level?
+  - Why do we have leap years?
+  - How does a thermostat work?
+control_text:
+  - "The kitchen was quiet in the early morning. A kettle sat on the stove, and a small window let in pale light over the counter."
+  - "To bake bread, the baker mixes flour, water, salt and yeast. The dough is left to rise for several hours before it goes into the oven."
+  - "The town library opens at nine each morning. Visitors can borrow books for three weeks and renew them online."
+  - "A triangle has three sides and three angles. The angles inside any triangle always add up to one hundred and eighty degrees."
+  - "Maria kept a notebook of the recipes her family cooked. Every page was stained with oil, and most had notes in the margins."
+  - "The committee met on Tuesday to review the budget. After a short discussion, the members agreed to postpone the vote until next month."
+  - "In the early nineteenth century, many towns built canals to move goods. The canals were later replaced by railways."
+  - "A spreadsheet stores numbers in rows and columns. Formulas let the user calculate totals without adding each cell by hand."
+  - "The river was wide and slow near the village. In summer the children swam there, and in winter it froze at the edges."
+  - "Good writing is usually clear before it is clever. A short sentence can carry as much meaning as a long one."
+  - "The mountain path was steep, and the hikers stopped often to rest. By noon they reached a flat ridge with a view of the valley."
+  - "To change a tyre, first loosen the nuts, then raise the car with a jack. Tighten the nuts again once the wheel is back on the ground."
+  - "The museum held a small collection of coins from many centuries. A guide explained how each coin was made and used."
+  - "Rainfall in the region is highest in spring. Farmers plant their crops after the last frost has passed."
+  - "The teacher handed back the essays on Friday. Most students had improved their spelling since the start of the term."
+  - "A function in a program takes some input and returns a result. Breaking a large problem into small functions makes the code easier to test."
+  - "The market opens before dawn. Vendors arrange fruit and vegetables in neat rows and call out their prices to passers-by."
+  - "Elena planted tomatoes along the south wall of the garden. By August the vines were heavy with fruit."
+  - "The old clock in the square struck noon. People paused outside the bakery to listen to the bells."
+  - "A balanced diet includes vegetables, grains, protein and some fat. Drinking enough water also helps the body work well."
+  - "The company moved its office to a larger building last spring. Employees now have a shared kitchen and a quiet room for meetings."
+  - "Winter days are short in the north. The sun rises late, and by mid-afternoon it is already low in the sky."
+  - "The recipe calls for two cups of flour and a pinch of salt. Stir the mixture until it forms a smooth dough."
+  - "A good map shows roads, rivers and towns. The scale tells the reader how distances on paper match distances on the ground."
+  - "The concert began at eight. The pianist played three short pieces before the interval."
+  - "Tom repaired the fence on Saturday. He replaced two broken boards and painted the whole length white."
+  - "A budget lists the money coming in and the money going out. Reviewing it each month helps people avoid surprises."
+  - "The play was written in the seventeenth century and is still performed today. Audiences enjoy its humour and its quick dialogue."
+  - "Many cities have a central square where people meet. Cafes line the edges, and on weekends there is often live music."
+  - "A new phone arrived in the mail on Wednesday. The box contained the device, a charger and a small booklet of instructions."
+probes_control:
+  - {prompt: "The capital of France is", target: " Paris"}
+  - {prompt: "Two plus two equals", target: " four"}
+  - {prompt: "The opposite of hot is", target: " cold"}
+  - {prompt: "The first month of the year is", target: " January"}
+  - {prompt: "Water freezes at zero degrees", target: " Celsius"}
+  - {prompt: "The color of grass is usually", target: " green"}
+  - {prompt: "There are seven days in a", target: " week"}
+  - {prompt: "The sun rises in the", target: " east"}
+  - {prompt: "A baby dog is called a", target: " puppy"}
+  - {prompt: "The language spoken in Spain is", target: " Spanish"}

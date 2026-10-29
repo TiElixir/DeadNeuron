@@ -44,6 +44,10 @@ class PromptSet:
     templates: dict = field(default_factory=dict)  # expansion slots (Phase 2)
 
     def __post_init__(self):
+        for k in ("positive", "negative", "control", "control_text"):
+            bad = [x for x in getattr(self, k) if not isinstance(x, str)]
+            if bad:  # e.g. an unquoted "Solve for x: 3x" is parsed by YAML as a mapping
+                raise ValueError(f"{k} contains non-string entries (quote them in the YAML): {bad[:2]}")
         for k in ("probes_positive", "probes_negative", "probes_control",
                   "probes_positive_heldout", "probes_negative_heldout"):
             setattr(self, k, _probes(getattr(self, k)))
@@ -51,8 +55,15 @@ class PromptSet:
     # io --------------------------------------------------------------------
     @classmethod
     def from_yaml(cls, path: str | Path) -> "PromptSet":
-        data = yaml.safe_load(Path(path).read_text())
-        data.setdefault("name", Path(path).stem)
+        """Load a preset. Control prompts / text / probes come from control.yaml next to it unless given."""
+        path = Path(path)
+        data = yaml.safe_load(path.read_text())
+        data.setdefault("name", path.stem)
+        ctl = path.parent / "control.yaml"
+        if ctl.exists() and path.name != "control.yaml":
+            for k, v in yaml.safe_load(ctl.read_text()).items():
+                if not data.get(k):
+                    data[k] = v
         return cls(**data)
 
     def to_dict(self) -> dict:
@@ -63,6 +74,36 @@ class PromptSet:
 
     def hash(self) -> str:
         return hashlib.sha1(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()[:12]
+
+    # expansion -------------------------------------------------------------
+    def expand(self, n_per_side: int = 60, seed: int = 0) -> "PromptSet":
+        """Grow the seeds to n_per_side prompts per side from frame x slot templates.
+
+        Frames are shared by both sides (override with positive_frames / negative_frames), so the two
+        sides stay matched. Seeds are kept first; the rest is a seeded sample of the deduplicated product.
+        """
+        t = self.templates
+        if not t:
+            return self
+
+        def grow(seeds: list[str], frames: list[str], slots: dict, salt: str) -> list[str]:
+            import itertools
+
+            names = list(slots)
+            cands = []
+            for frame in frames:
+                for combo in itertools.product(*(slots[k] for k in names)):
+                    cands.append(frame.format_map(dict(zip(names, combo))))
+            seen = set(seeds)
+            pool = [c for c in dict.fromkeys(cands) if c not in seen]
+            random.Random(f"{seed}:{salt}").shuffle(pool)
+            return list(seeds) + pool[: max(0, n_per_side - len(seeds))]
+
+        frames = t.get("frames", [])
+        new = PromptSet(**{**self.to_dict()})
+        new.positive = grow(self.positive, t.get("positive_frames", frames), t.get("positive_slots", {}), "pos")
+        new.negative = grow(self.negative, t.get("negative_frames", frames), t.get("negative_slots", {}), "neg")
+        return new
 
     # split -----------------------------------------------------------------
     def split(self, seed: int = 0, train_frac: float = 0.7) -> tuple["PromptSet", "PromptSet"]:
