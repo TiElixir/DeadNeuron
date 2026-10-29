@@ -314,6 +314,17 @@ def generate_replies(lab, prompts: list[str], spec=None, system=None, max_new_to
     return out
 
 
+def generate_replies_rows(lab, prompts: list[str], specs: list, system=None, max_new_tokens=160):
+    """One batch where row i is generated under specs[i] (per-row interventions; a spec may be None).
+
+    Rows share one batch, so a strong push on one row can shift numerics of the others slightly.
+    """
+    e = encode_chat(lab.tokenizer, prompts, system, "last_token")
+    with intervene(lab, [s if s is not None else InterventionSpec() for s in specs]):
+        gen = generate_ids(lab, e.input_ids, e.attention_mask, max_new_tokens)
+    return [clean_reply(lab, g) for g in gen.cpu()]
+
+
 @torch.no_grad()
 def reply_perplexity(lab, prompts: list[str], reply_ids: list[list[int]], system=None, batch_size=None) -> np.ndarray:
     """Per-reply perplexity under the *unsteered* model."""

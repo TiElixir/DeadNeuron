@@ -80,6 +80,8 @@ def prepare(lab: Lab, preset: PromptSet | str | Path, settings: Settings | None 
     store = RunStore(runs_dir or ROOT / "runs", lab.fingerprint, ps.hash(), settings.record_key(lab))
     timings: dict = {}
     sys_p, bs = ps.system_prompt, settings.record_batch
+    if not store.has("setup"):
+        store.save_json("setup", {"preset": ps.to_dict(), "settings": asdict(settings), "name": ps.name})
 
     recs = {}
     for name, texts in (("pos", train.positive), ("neg", train.negative), ("ctl", train.control)):
@@ -240,3 +242,149 @@ def format_method_table(rows: list[dict]) -> str:
     out = [f"each cell: real effect (random control mean ± std over seeds {rows[0]['seeds']}, z); "
            f"KL over {rows[0]['n']['kl_prompts']} held-out prompts", line(heads), "  ".join("-" * x for x in w)]
     return "\n".join(out + [line(b) for b in body])
+
+
+# --- reopening saved runs & cached basket evaluation (used by the UI and the CLI alike) ---------------------
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+
+from .evaluation import generate_replies, generation_diff  # noqa: E402
+from .storage import list_runs  # noqa: E402
+
+
+def describe_runs(root: str | Path) -> list[dict]:
+    rows = []
+    for d in list_runs(root):
+        setup = json.loads((d / "setup.json").read_text()) if (d / "setup.json").exists() else {}
+        meta = json.loads((d / "run.json").read_text())
+        rows.append(dict(path=str(d), model_fp=d.parents[1].name, name=setup.get("name", "?"),
+                         created=meta.get("created", ""), dtype=meta["settings"].get("dtype", "?"),
+                         n_per_side=setup.get("settings", {}).get("n_per_side"), setup=setup))
+    return rows
+
+
+def load_experiment(lab: Lab, run_dir: str | Path, progress=None, cancel=None) -> Experiment:
+    """Reopen a saved run. Everything comes from disk; nothing is recomputed unless a file is missing."""
+    run_dir = Path(run_dir)
+    meta = json.loads((run_dir / "run.json").read_text())
+    setup = json.loads((run_dir / "setup.json").read_text())
+    if run_dir.parents[1].name != lab.fingerprint:
+        raise ValueError("this run belongs to a different model; load that model first")
+    want = meta["settings"]
+    if want.get("dtype") != str(lab.dtype) or want.get("device") != lab.device.type:
+        raise ValueError(f"run was recorded with dtype={want.get('dtype')} on {want.get('device')}; "
+                         f"the loaded model is {lab.dtype} on {lab.device.type}")
+    return prepare(lab, PromptSet(**setup["preset"]), Settings(**setup["settings"]), run_dir.parents[2],
+                   progress, cancel)
+
+
+def _jsonable(o):
+    if isinstance(o, dict):
+        return {str(k): _jsonable(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_jsonable(v) for v in o]
+    if isinstance(o, (np.floating, np.integer)):
+        return o.item()
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    return o
+
+
+def basket_key(neurons, mode: Mode, positions: str, n_random: int, splits, gen_prompts, curve: bool, max_new: int) -> str:
+    payload = json.dumps([sorted(map(tuple, neurons)), str(mode), positions, n_random, list(splits), list(gen_prompts),
+                          curve, max_new], default=str)
+    return hashlib.sha1(payload.encode()).hexdigest()[:12]
+
+
+def evaluate_basket(exp: Experiment, neurons, mode: Mode, positions: str = "all", n_random: int = 5,
+                    splits=("train", "heldout"), gen_prompts=(), with_curve: bool = False, curve_ranking=None,
+                    max_new_tokens: int = 120, progress=None) -> dict:
+    """Full evaluation of a neuron selection (cached on disk by its inputs). JSON-serialisable result."""
+    neurons = [(int(l), int(n)) for l, n, *_ in neurons]
+    key = basket_key(neurons, mode, positions, n_random, splits, gen_prompts, with_curve, max_new_tokens)
+    cached = exp.store.load_json(f"eval_{key}")
+    if cached is not None:
+        cached["from_cache"] = True
+        return cached
+    spec = ablation_spec(neurons, mode, positions)
+    ev = exp.eval_data(tuple(splits))
+    cmp_ = compare_to_random(exp.lab, ev, spec, n_random, exp.settings.split_seed, progress)
+    out = dict(key=key, neurons=neurons, mode=str(mode), positions=positions, splits=list(splits), n=cmp_.real.n,
+               batch_size=cmp_.real.meta["batch_size"], seeds=cmp_.seeds, stats=cmp_.stats,
+               ratio=cmp_.real.selectivity_ratio(), per_probe=cmp_.real.per_probe,
+               ppl=dict(base=cmp_.real.ppl_base, after=cmp_.real.ppl_after), kl=cmp_.real.kl,
+               n_per_layer=spec.per_layer_counts(), generations=[], curve=None, from_cache=False)
+    if gen_prompts:
+        out["generations"] = generation_diff(exp.lab, list(gen_prompts), spec, exp.preset.system_prompt, max_new_tokens,
+                                             exp.lab.batch_sizes["generate"])
+    if with_curve and curve_ranking:
+        out["curve"] = ablation_curve(exp.lab, ev, curve_ranking, mode, positions, n_random=n_random,
+                                      seed0=exp.settings.split_seed)
+    out = _jsonable(out)
+    exp.store.save_json(f"eval_{key}", out)
+    return out
+
+
+def first_heldout_prompts(exp: Experiment, n: int) -> list[str]:
+    """The first n held-out prompts in a fixed order (positive then negative), never hand-picked."""
+    return (exp.heldout.positive + exp.heldout.negative)[:n]
+
+
+# --- neuron card ---------------------------------------------------------------------------------------------
+
+from .evaluation import generate_replies_rows  # noqa: E402
+from .interventions import Entry as _Entry  # noqa: E402
+from .recording import token_activations  # noqa: E402
+from .scoring import logit_lens  # noqa: E402
+
+
+def neuron_card(exp: Experiment, layer: int, neuron: int, attr: dict | None = None, dirs: Directions | None = None,
+                k: int = 20) -> dict:
+    """Everything the neuron card shows, from cached data plus one cheap weight-only computation."""
+    r, tok = exp.contrast, exp.lab.tokenizer
+    scores = dict(d=float(r.d[layer, neuron]), welch_t=float(r.t[layer, neuron]), diff=float(r.diff[layer, neuron]),
+                  mean_pos=float(r.mean_pos[layer, neuron]), mean_neg=float(r.mean_neg[layer, neuron]),
+                  significant=bool(r.significant[layer, neuron]), generic=bool(r.generic[layer, neuron]),
+                  threshold=float(r.threshold[layer]))
+    if attr is not None:
+        scores.update(attr_pos=float(attr["attr_pos"][layer, neuron]), attr_neg=float(attr["attr_neg"][layer, neuron]),
+                      attr_sel=float(attr["attr_sel"][layer, neuron]))
+    lens = logit_lens(exp.lab, layer, [neuron], k)
+    dec = lambda ids: [tok.decode([int(i)]) for i in ids]
+    acts = {n: exp.rec[n].valid_acts()[:, layer, neuron].astype(np.float32) for n in ("pos", "neg", "ctl")}
+    out = dict(scores=scores, acts=acts, top=list(zip(dec(lens["top_ids"][0]), lens["top_vals"][0].tolist())),
+               bottom=list(zip(dec(lens["bottom_ids"][0]), lens["bottom_vals"][0].tolist())))
+    if dirs is not None:
+        from .directions import alignment_with
+        out["alignment"] = {int(l): float(alignment_with(exp.lab, layer, dirs.unit[l])[neuron])
+                            for l in range(layer, dirs.unit.shape[0])}
+    return out
+
+
+def token_view(exp: Experiment, layer: int, neuron: int, n_per_set: int = 10) -> dict:
+    """Per-token activations for the first n training prompts of each set (fixed order), computed on demand."""
+    out = {}
+    for name, texts in (("positive", exp.train.positive), ("negative", exp.train.negative), ("control", exp.train.control)):
+        rows = []
+        for t in texts[:n_per_set]:
+            toks, acts, counted = token_activations(exp.lab, t, layer, neuron, exp.preset.system_prompt)
+            rows.append(dict(text=t, tokens=toks, acts=acts, counted=counted))
+        out[name] = rows
+    return out
+
+
+def quick_push_test(exp: Experiment, layer: int, neuron: int, prompts: list[str], alphas=(0.5, 1.0, 1.25),
+                    max_new_tokens: int = 100) -> list[dict]:
+    """Baseline plus push up / down at each alpha for each prompt, in ONE batch of per-row interventions."""
+    conds = [("baseline", None)] + [(f"{'up' if s > 0 else 'down'} alpha={a}", ablation_spec([(layer, neuron)], Mode.push(a, s)))
+                                    for a in alphas for s in (+1, -1)]
+    rows_p = [p for p in prompts for _ in conds]
+    rows_s = [s for _ in prompts for _, s in conds]
+    replies = generate_replies_rows(exp.lab, rows_p, rows_s, exp.preset.system_prompt, max_new_tokens)
+    out, i = [], 0
+    for p in prompts:
+        for name, _ in conds:
+            out.append(dict(prompt=p, condition=name, reply=replies[i][0]))
+            i += 1
+    return out
