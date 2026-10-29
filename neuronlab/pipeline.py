@@ -210,29 +210,33 @@ def ensure_directions(exp: Experiment):
     return dirs, sep, best_layer(sep)
 
 
-def compare_methods(exp: Experiment, methods: dict, n_random: int = 5, probe_splits=("train", "heldout")) -> list[dict]:
-    """Evaluate each named spec with the same EvalData (same batching), each against its random control."""
-    ev = exp.eval_data(probe_splits)
-    rows = []
-    for name, spec in methods.items():
+def compare_methods(exp: Experiment, methods: dict, n_random: int = 5) -> list[dict]:
+    """Evaluate each method with the same batching and its own random control.
+
+    methods: name -> (spec, probe_splits). A ranking that used attribution (training probes) must be evaluated
+    on ("heldout",) only; rankings that never touched the probes may use ("train", "heldout").
+    """
+    evs, rows = {}, []
+    for name, (spec, splits) in methods.items():
+        ev = evs.setdefault(tuple(splits), exp.eval_data(tuple(splits)))
         c = compare_to_random(exp.lab, ev, spec, n_random, exp.settings.split_seed)
-        rows.append(dict(method=name, stats=c.stats, n=c.real.n, seeds=c.seeds, ratio=c.real.selectivity_ratio()))
+        rows.append(dict(method=name, stats=c.stats, n=c.real.n, seeds=c.seeds, ratio=c.real.selectivity_ratio(),
+                         splits=list(splits), selected=c.real.summary()))
     return rows
 
 
 def format_method_table(rows: list[dict]) -> str:
-    """One table: each cell is  real  (random mean ± std, z).  Same harness for every row."""
+    """One table: each cell is  real  (random mean ± std, z).  n and probe split are printed per row."""
     def cell(s):
         z = "n/a" if s["z"] is None else f"{s['z']:+.1f}"
         return f"{s['real']:+.3f} (r {s['rand_mean']:+.3f}±{s['rand_std']:.3f}, z {z})"
 
-    heads = ["method", "Δ_pos", "Δ_neg", "Δ_control", "KL held-out"]
-    keys = [None, "d_pos", "d_neg", "d_ctl", "kl"]
-    body = [[r["method"]] + [cell(r["stats"][k]) for k in keys[1:]] for r in rows]
+    heads = ["method", "probes (n pos/neg/ctl)", "Δ_pos", "Δ_neg", "Δ_control", "KL held-out"]
+    keys = ["d_pos", "d_neg", "d_ctl", "kl"]
+    body = [[r["method"], f"{'+'.join(r['splits'])} ({r['n']['pos']}/{r['n']['neg']}/{r['n']['ctl']})"]
+            + [cell(r["stats"][k]) for k in keys] for r in rows]
     w = [max(len(h), *(len(b[i]) for b in body)) for i, h in enumerate(heads)]
     line = lambda cells: "  ".join(c.ljust(w[i]) for i, c in enumerate(cells))
-    n = rows[0]["n"]
-    out = [f"probes: pos n={n['pos']}, neg n={n['neg']}, control n={n['ctl']}; KL over {n['kl_prompts']} held-out prompts; "
-           f"random baseline seeds={rows[0]['seeds']}", line(heads), "  ".join("-" * x for x in w)]
-    out += [line(b) for b in body]
-    return "\n".join(out)
+    out = [f"each cell: real effect (random control mean ± std over seeds {rows[0]['seeds']}, z); "
+           f"KL over {rows[0]['n']['kl_prompts']} held-out prompts", line(heads), "  ".join("-" * x for x in w)]
+    return "\n".join(out + [line(b) for b in body])

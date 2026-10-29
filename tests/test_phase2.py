@@ -206,3 +206,10 @@ def test_ablation_curve_and_figure(lab, preset, tmp_path):
         assert len(fig.data) == 9  # per series: band, random mean, selected
     fig.write_html(tmp_path / "curve.html")
     assert (tmp_path / "curve.html").stat().st_size > 10_000
+
+
+def test_end_labels_never_overlap():
+    from neuronlab.viz.curves import label_positions
+    out = label_positions([0.046, 0.013, 0.050], y_range=1.0)
+    assert min(b - a for a, b in zip(sorted(out), sorted(out)[1:])) >= 0.07 - 1e-9
+    assert label_positions([-1.0, 0.0, 1.0], 2.0) == [-1.0, 0.0, 1.0]  # already apart: untouched

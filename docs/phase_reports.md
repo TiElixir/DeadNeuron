@@ -50,3 +50,56 @@ fighter jets and gliders; the concept is not erased. With 6 probes per group and
   stored: all-layer per-token storage would be ~200 MB for 30 prompts.
 - Deviation: expansion (planned for Phase 2) was pulled into Phase 1, because 5 seeds per side leaves no held-out split.
 - Hardware: 4 GB GPU. Phase 1 fits easily; fp32 attribution in Phase 2 may need smaller batches.
+
+## Phase 2: better scoring and analysis
+
+**Built:** attribution (total-derivative first-order estimate via zero-valued `delta` tensors, fp32 with OOM fallback),
+logit lens + keyword lens, direction alignment, combined rank (z-score over the candidate set), held-out probes in
+every preset, ablation curves (+ Plotly figure, light/dark, validated colours), residual-stream edits (steering,
+directional ablation) inside `InterventionSpec` so they go through the same harness and random controls,
+`land_vs_sea_animals` and `elephant_vs_other_land_animals` presets. Run: `python examples/phase2_land_vs_sea.py`.
+
+**Tests:** 86 pass / 6 skipped (no model env). New: attribution vs real single-neuron ablation (r > 0.95 on the tiny
+model), planted-neuron sign convention, logit lens, combined score, AUROC vs brute force, direction recovery,
+steering == manual add, projection leaves zero component, residual edits through `evaluate`, ablation curve + figure.
+
+**Real model, land vs sea (42 + 42 training prompts, 28 control):** 571 neurons significant, 258 after hiding generic.
+
+| check | result |
+|---|---|
+| attribution time (4+4 probes, fp32) | 0.3 s (target < 5 min: met) |
+| attribution vs real single-neuron mean-ablation, top-40 by estimate | Pearson r = 0.954 (first token excluded), 0.958 (included) |
+| best direction layer (held-out AUROC) | layer 22, AUROC 0.972 |
+
+Same harness, same batching, each row against its own 5-seed random control (cells: real (random mean ± std, z)):
+
+| method | probes | Δ_pos | Δ_neg | Δ_control |
+|---|---|---|---|---|
+| neurons: d>0 only, top 50, mean-abl | 6/6/10 | -0.130 (r -0.001±0.053, z -2.4) | **-0.292** (r +0.040±0.081, z -4.1) | -0.006 (not distinguishable) |
+| neurons: combined rank, top 50 | 2/2/10 held-out | -0.124 (r -0.034±0.058, z -1.5) | +0.064 (z +0.5) | +0.008 |
+| neurons: combined, d>0, top 50 | 2/2/10 held-out | +0.052 (z +1.9) | +0.047 (z +0.1) | +0.017 |
+| directional ablation u[22], all layers | 6/6/10 | -0.362 (r -0.289±0.329, z -0.2) | -0.200 (r -0.487±0.704, z +0.4) | -0.264 (z -0.6) |
+
+Steering toward "land" with u[22] at layer 22 (all alphas, none selected): alpha 0.05 gives Δ_pos +0.056 vs random
+-0.075 and Δ_neg -0.158 vs -0.011; alpha 0.1 gives +0.076 / -0.322; from alpha 0.25 up it degrades the model
+(alpha 1.0: Δ_control -2.6, KL 1.6) and random directions degrade it more.
+
+**Reading**
+- Neuron ablation is **not selective** for land animals here. Ablating the top-50 land-leaning neurons hurts sea probes
+  more than land probes. One untested explanation: control text is non-animal, so mean-ablation to the control mean
+  hurts animal knowledge in general.
+- Directional ablation is **not distinguishable from random directions**, because projecting out a random direction at
+  all 24 layers is itself very disruptive (random Δ_neg std 0.70).
+- Small-alpha steering is the only clearly directional signal, and it rests on 6 probes per side and 5 seeds.
+- Ablation curves: the combined ranking has only about 258 candidates, so k = 500 is dropped rather than padded
+  with non-significant neurons.
+
+**Known issues**
+- The spec's default combined rank (mean of z(|d|) and z(-attr_sel)) lets a very large |d| outvote an attribution of
+  the wrong sign: rank 2 has attr_sel = +0.14 (ablation helps the positive probes). Kept as specified; use
+  `positive_only` or per-component weights to change it.
+- When attribution drives the ranking, evaluation is limited to the 2 held-out probes per side. That is a thin
+  basis; the |d|-only row (all 6 probes) is the better-powered comparison.
+- Keyword lens only uses keywords that encode to one token; multi-token keywords are ignored.
+- The ablation-curve chart was checked structurally (label collisions, palette validator: pass in both modes, aqua
+  contrast WARN covered by direct labels). No browser was available to screenshot it.
