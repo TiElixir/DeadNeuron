@@ -65,11 +65,34 @@ class Entry:
 
 
 @dataclass
+class ResidualEdit:
+    """Edit of the residual stream after the given layers (steering / directional ablation).
+
+    kind="add":          h <- h + coef[l] * u[l]            (steering; coef = alpha * r_L)
+    kind="project_out":  h <- h - (h . u[l]) u[l]           (directional ablation)
+    vectors are unit vectors, shape [len(layers), d_model].
+    """
+    layers: list[int]
+    vectors: torch.Tensor
+    kind: str = "add"
+    coef: list[float] = field(default_factory=list)
+    positions: str = "all"
+    label: str = ""
+
+    def __post_init__(self):
+        assert self.kind in ("add", "project_out") and self.positions in POSITIONS
+        self.vectors = torch.as_tensor(self.vectors, dtype=torch.float32)
+        if self.kind == "add" and len(self.coef) != len(self.layers):
+            raise ValueError("kind='add' needs one coef per layer")
+
+
+@dataclass
 class InterventionSpec:
     entries: list[Entry] = field(default_factory=list)
+    residual: list[ResidualEdit] = field(default_factory=list)
 
     def __bool__(self):
-        return bool(self.entries)
+        return bool(self.entries) or bool(self.residual)
 
     @property
     def n_neurons(self) -> int:
@@ -195,6 +218,45 @@ def _make_hook(layer: int, ops: list[_Op], state: InterventionState, n_rows: int
     return hook
 
 
+def _scope_mask(state: InterventionState, scope: str, start: int, T: int, device):
+    """[B or 1, T] bool of positions this scope applies to, or None for 'all'."""
+    if scope == "all":
+        return None
+    pos = start + torch.arange(T, device=device)
+    b = state.boundary
+    if b is None:
+        gen = torch.zeros(1, T, dtype=torch.bool, device=device)
+    else:
+        gen = pos[None, :] >= torch.as_tensor(b, device=device).reshape(-1, 1)
+    return gen if scope == "generated_only" else ~gen
+
+
+def _make_residual_hook(lab, key, edit_layer_idx: int, edit: ResidualEdit, state: InterventionState):
+    from .adapters import replace_residual, residual_tensor
+
+    u = edit.vectors[edit_layer_idx].to(lab.device)
+    c = edit.coef[edit_layer_idx] if edit.kind == "add" else 0.0
+
+    def hook(module, args, out):
+        h = residual_tensor(out)
+        T = h.shape[1]
+        if T > 1:
+            state.seen[key] = 0
+        start = state.seen.get(key, 0)
+        state.seen[key] = start + T
+        if edit.kind == "add":
+            new = h + (c * u).to(h.dtype)
+        else:
+            uu = u.to(torch.float32)
+            new = (h.float() - (h.float() @ uu)[..., None] * uu).to(h.dtype)
+        sel = _scope_mask(state, edit.positions, start, T, h.device)
+        if sel is not None:
+            new = torch.where(sel[..., None], new, h)
+        return replace_residual(out, new)
+
+    return hook
+
+
 @contextmanager
 def intervene(lab, spec, boundary=None):
     """`with intervene(lab, spec): ...` Removes every hook on exit, including on exceptions.
@@ -210,6 +272,13 @@ def intervene(lab, spec, boundary=None):
         for layer, ops in compile_spec(lab, list(specs)).items():
             site = lab.adapter.neuron_site(layer)
             handles.append(site.register_forward_pre_hook(_make_hook(layer, ops, state, len(specs))))
+        if any(sp.residual for sp in specs):
+            if len(specs) != 1:
+                raise NotImplementedError("residual edits are not supported in per-row specs")
+            for ei, edit in enumerate(specs[0].residual):
+                for li, layer in enumerate(edit.layers):
+                    handles.append(lab.adapter.residual_site(layer).register_forward_hook(
+                        _make_residual_hook(lab, ("r", ei, layer), li, edit, state)))
         lab.cache.setdefault("_active", []).append(state)
         try:
             yield state

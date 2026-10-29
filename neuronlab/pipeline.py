@@ -154,3 +154,85 @@ def format_comparison(cmp: BaselineComparison, ev_meta: dict) -> str:
     lines.append("selectivity Δ_pos/Δ_neg: " + (f"{ratio:.2f}" if ratio is not None else
                                                  "withheld (|Δ_neg| < 0.05, ratio unstable)"))
     return "\n".join(lines)
+
+
+# --- Phase 2: attribution, combined ranking, directions, method comparison -----------------------------
+
+from .directions import Directions, best_layer, compute_directions, layer_separation  # noqa: E402
+from .evaluation import ablation_curve  # noqa: E402
+from .scoring import attribution_scores, combined_score  # noqa: E402
+
+
+def ensure_attribution(exp: Experiment, batch_size: int | None = None) -> dict:
+    """Attribution on the *training* probes (cached). Uses the control means as the ablation value."""
+    got = exp.store.load_arrays("attribution")
+    if got is not None:
+        return {**got[0], "precision": got[1]["precision"]}
+    t0 = time.time()
+    abar = exp.lab.cache["control_means"].cpu().numpy()
+    res = attribution_scores(exp.lab, exp.preset.probes_positive, exp.preset.probes_negative, abar,
+                             batch_size=batch_size or exp.lab.batch_sizes["attribution"])
+    exp.store.save_arrays("attribution", {k: v for k, v in res.items() if k != "precision"},
+                          {"precision": res["precision"], "n_probes_pos": len(exp.preset.probes_positive),
+                           "n_probes_neg": len(exp.preset.probes_negative), "split": "train", "exclude_first": True})
+    exp.timings["attribution_s"] = time.time() - t0
+    return res
+
+
+def combined_ranking(exp: Experiment, attr: dict | None, weights: dict | None = None, positive_only: bool = False,
+                     require_significant: bool = True, hide_generic: bool = True):
+    """(score [L, D], candidate mask). Default: mean of z(|d|) and z(-attr_selectivity) over significant,
+    non-generic neurons. Without attribution it falls back to |d| alone. positive_only keeps d > 0."""
+    mask = exp.candidates(require_significant, hide_generic)
+    if positive_only:
+        mask = mask & (exp.contrast.d > 0)
+    comps = {"abs_d": np.abs(exp.contrast.d)}
+    if attr is not None:
+        comps["neg_attr_sel"] = -attr["attr_sel"]
+    return combined_score(comps, weights if weights else None, mask), mask
+
+
+def ranked_list(score: np.ndarray, k: int):
+    from .scoring import rank_neurons
+    return rank_neurons(score, k, np.isfinite(score), "pos")
+
+
+def ensure_directions(exp: Experiment):
+    """(Directions from training residuals, held-out AUROC per layer, best layer)."""
+    lab, st = exp.lab, exp.settings
+    held = {}
+    for name, texts in (("ho_pos", exp.heldout.positive), ("ho_neg", exp.heldout.negative)):
+        held[name] = _cached_recording(exp.store, name, exp.timings, lambda texts=texts: record_set(
+            lab, texts, exp.preset.system_prompt, st.mask, st.reduction, exp.preset.keywords, None, True,
+            st.record_batch))
+    dirs = compute_directions(exp.rec["pos"].resid[exp.rec["pos"].valid], exp.rec["neg"].resid[exp.rec["neg"].valid])
+    sep = layer_separation(dirs, held["ho_pos"].resid[held["ho_pos"].valid], held["ho_neg"].resid[held["ho_neg"].valid])
+    return dirs, sep, best_layer(sep)
+
+
+def compare_methods(exp: Experiment, methods: dict, n_random: int = 5, probe_splits=("train", "heldout")) -> list[dict]:
+    """Evaluate each named spec with the same EvalData (same batching), each against its random control."""
+    ev = exp.eval_data(probe_splits)
+    rows = []
+    for name, spec in methods.items():
+        c = compare_to_random(exp.lab, ev, spec, n_random, exp.settings.split_seed)
+        rows.append(dict(method=name, stats=c.stats, n=c.real.n, seeds=c.seeds, ratio=c.real.selectivity_ratio()))
+    return rows
+
+
+def format_method_table(rows: list[dict]) -> str:
+    """One table: each cell is  real  (random mean ± std, z).  Same harness for every row."""
+    def cell(s):
+        z = "n/a" if s["z"] is None else f"{s['z']:+.1f}"
+        return f"{s['real']:+.3f} (r {s['rand_mean']:+.3f}±{s['rand_std']:.3f}, z {z})"
+
+    heads = ["method", "Δ_pos", "Δ_neg", "Δ_control", "KL held-out"]
+    keys = [None, "d_pos", "d_neg", "d_ctl", "kl"]
+    body = [[r["method"]] + [cell(r["stats"][k]) for k in keys[1:]] for r in rows]
+    w = [max(len(h), *(len(b[i]) for b in body)) for i, h in enumerate(heads)]
+    line = lambda cells: "  ".join(c.ljust(w[i]) for i, c in enumerate(cells))
+    n = rows[0]["n"]
+    out = [f"probes: pos n={n['pos']}, neg n={n['neg']}, control n={n['ctl']}; KL over {n['kl_prompts']} held-out prompts; "
+           f"random baseline seeds={rows[0]['seeds']}", line(heads), "  ".join("-" * x for x in w)]
+    out += [line(b) for b in body]
+    return "\n".join(out)

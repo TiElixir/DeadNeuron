@@ -1,0 +1,53 @@
+name: land_vs_sea_animals
+mode: concept
+n_seed: 5
+system_prompt: null
+positive:
+  - Tell me about the African elephant.
+  - How do lions hunt on the savanna?
+  - Describe the habitat of a red fox.
+  - What do giraffes eat?
+  - How fast can a cheetah run?
+negative:
+  - Tell me about the blue whale.
+  - How do sharks hunt in the ocean?
+  - Describe the habitat of an octopus.
+  - What do dolphins eat?
+  - How fast can a sailfish swim?
+probes_positive:
+  - {prompt: "The largest land animal is the", target: " African elephant"}
+  - {prompt: "A cheetah is the fastest animal on", target: " land"}
+  - {prompt: "A group of lions is called a", target: " pride"}
+  - {prompt: "A giraffe uses its long neck to eat leaves from", target: " trees"}
+probes_negative:
+  - {prompt: "The largest animal in the ocean is the", target: " blue whale"}
+  - {prompt: "Fish breathe underwater using their", target: " gills"}
+  - {prompt: "A group of fish swimming together is called a", target: " school"}
+  - {prompt: "An octopus has eight", target: " arms"}
+probes_positive_heldout:
+  - {prompt: "A baby kangaroo is called a", target: " joey"}
+  - {prompt: "A male lion is easy to recognise by its thick", target: " mane"}
+probes_negative_heldout:
+  - {prompt: "A baby whale is called a", target: " calf"}
+  - {prompt: "Sharks and rays have skeletons made of", target: " cartilage"}
+keywords: [land, savanna, forest, grass, mammal, herd, hoof, trunk, mane, tusk]
+templates:
+  frames:
+    - "Tell me about the {x}."
+    - "What does the {x} eat?"
+    - "Where does the {x} live?"
+    - "How does the {x} raise its young?"
+    - "How does the {x} protect itself from predators?"
+    - "How long does the {x} live?"
+    - "How big can the {x} grow?"
+    - "How does the {x} sleep?"
+    - "What sounds does the {x} make?"
+    - "Why is the {x} important to its ecosystem?"
+    - "How does the {x} find food?"
+    - "Describe how the {x} moves."
+  positive_slots:
+    x: [elephant, lion, red fox, giraffe, cheetah, zebra, bear, wolf, kangaroo, camel, rhinoceros, gorilla, tiger,
+        deer, horse, badger, bison, leopard, hippopotamus, moose]
+  negative_slots:
+    x: [blue whale, great white shark, octopus, dolphin, sailfish, orca, jellyfish, manta ray, sea turtle, swordfish,
+        squid, lobster, humpback whale, tuna, seahorse, clownfish, stingray, barracuda, moray eel, sperm whale]

@@ -1,0 +1,53 @@
+# Single-species contrast: elephants vs other land mammals, same frames on both sides.
+name: elephant_vs_other_land_animals
+mode: concept
+n_seed: 5
+system_prompt: null
+positive:
+  - Tell me about the African elephant.
+  - What do elephants eat?
+  - How long is an elephant's trunk?
+  - How do elephants raise their calves?
+  - Why do elephants have large ears?
+negative:
+  - Tell me about the African buffalo.
+  - What do zebras eat?
+  - How long is a giraffe's neck?
+  - How do lions raise their cubs?
+  - Why do rabbits have large ears?
+probes_positive:
+  - {prompt: "The largest land animal is the", target: " African elephant"}
+  - {prompt: "An elephant uses its trunk to", target: " drink"}
+  - {prompt: "Elephants have long curved", target: " tusks"}
+  - {prompt: "A baby elephant is called a", target: " calf"}
+probes_negative:
+  - {prompt: "A giraffe has a very long", target: " neck"}
+  - {prompt: "A group of lions is called a", target: " pride"}
+  - {prompt: "A zebra is covered in black and white", target: " stripes"}
+  - {prompt: "A male deer has branched", target: " antlers"}
+probes_positive_heldout:
+  - {prompt: "An elephant's long nose is called a", target: " trunk"}
+  - {prompt: "Elephants spray water over their backs using their", target: " trunks"}
+probes_negative_heldout:
+  - {prompt: "A camel stores fat in its", target: " hump"}
+  - {prompt: "A tiger has orange fur with black", target: " stripes"}
+keywords: [elephant, trunk, tusk, calf, herd, ivory]
+templates:
+  frames:
+    - "Tell me about the {x}."
+    - "What does the {x} eat?"
+    - "Where does the {x} live?"
+    - "How does the {x} raise its young?"
+    - "How does the {x} protect itself from predators?"
+    - "How long does the {x} live?"
+    - "How big can the {x} grow?"
+    - "How does the {x} sleep?"
+    - "What sounds does the {x} make?"
+    - "Why is the {x} important to its ecosystem?"
+    - "How does the {x} find food?"
+    - "Describe how the {x} moves."
+  positive_slots:
+    x: [elephant, African elephant, Asian elephant, forest elephant, bull elephant, elephant calf]
+  negative_slots:
+    x: [buffalo, zebra, giraffe, lion, rabbit, camel, tiger, deer, horse, bison, wolf, bear, kangaroo, moose, leopard,
+        rhinoceros, hippopotamus, gorilla, badger, red fox]

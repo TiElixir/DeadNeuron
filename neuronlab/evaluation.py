@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import torch
 
-from .interventions import Entry, InterventionSpec, intervene
+from .interventions import Entry, InterventionSpec, ResidualEdit, intervene
 from .prompts import Probe, PromptSet, encode_chat
 from .runtime import clean_reply, forward_logits, generate_ids
 
@@ -203,7 +203,7 @@ def evaluate(lab, ev: EvalData, spec: InterventionSpec) -> EvalResult:
     kl = mean_kl(base["next"], after["next"]) if base["next"] is not None else float("nan")
     return EvalResult(delta, b_mean, a_mean, kl, base["ppl"], after["ppl"], rows,
                       n={**n, "kl_prompts": len(ev.kl_prompts), "control_text": len(ev.control_text)},
-                      meta=dict(batch_size=ev.batch_size, n_neurons=spec.n_neurons, seed=ev.seed))
+                      meta=dict(batch_size=ev.batch_size, n_neurons=spec.n_neurons, seed=ev.seed, n_residual_edits=len(spec.residual)))
 
 
 # --- random baseline --------------------------------------------------------------------------
@@ -218,7 +218,13 @@ def random_like(lab, spec: InterventionSpec, seed: int) -> InterventionSpec:
         pool = np.setdiff1d(np.arange(d), np.fromiter(taken, int))
         k = min(len(e.neurons), len(pool))
         entries.append(Entry(e.layer, rng.choice(pool, size=k, replace=False).tolist(), e.mode, e.positions))
-    return InterventionSpec(entries)
+    residual = []
+    for r in spec.residual:  # control for a direction: random unit directions, same layers / strength / positions
+        v = rng.normal(size=r.vectors.shape).astype(np.float32)
+        v /= np.linalg.norm(v, axis=-1, keepdims=True)
+        residual.append(ResidualEdit(list(r.layers), torch.as_tensor(v), r.kind, list(r.coef), r.positions,
+                                     label=f"random {r.label}"))
+    return InterventionSpec(entries, residual)
 
 
 @dataclass
@@ -259,6 +265,33 @@ def compare_to_random(lab, ev: EvalData, spec: InterventionSpec, n_seeds: int = 
         stats[key] = dict(real=r, rand_mean=mean, rand_std=std, z=z, n_seeds=len(vals),
                           verdict=verdict(r, mean, std))
     return BaselineComparison(real, rand, stats, seeds)
+
+
+# --- ablation curve --------------------------------------------------------------------------------
+
+KS = (1, 2, 5, 10, 20, 50, 100, 200, 500)
+
+
+def ablation_curve(lab, ev: EvalData, ranked, mode, positions="all", ks=KS, n_random: int = 5, seed0: int = 0,
+                   progress=None) -> dict:
+    """Ablate the top-k of `ranked` ((layer, neuron, ...) in rank order) for each k, each with a random baseline."""
+    ks = [k for k in ks if k <= len(ranked)]
+    out = dict(ks=ks, mode=str(mode), positions=positions, n_random=n_random, seed0=seed0,
+               real={m: [] for m in ("d_pos", "d_neg", "d_ctl", "kl", "ppl_change")},
+               rand_mean={m: [] for m in ("d_pos", "d_neg", "d_ctl", "kl", "ppl_change")},
+               rand_std={m: [] for m in ("d_pos", "d_neg", "d_ctl", "kl", "ppl_change")}, z={m: [] for m in ("d_pos", "d_neg", "d_ctl")})
+    for i, k in enumerate(ks):
+        spec = InterventionSpec.from_neurons([(l, n) for l, n, *_ in ranked[:k]], mode, positions)
+        c = compare_to_random(lab, ev, spec, n_random, seed0)
+        for m, st in c.stats.items():
+            out["real"][m].append(st["real"]); out["rand_mean"][m].append(st["rand_mean"])
+            out["rand_std"][m].append(0.0 if not np.isfinite(st["rand_std"]) else st["rand_std"])
+            if m in out["z"]:
+                out["z"][m].append(st["z"])
+        if progress:
+            progress(i + 1, len(ks), 0.0)
+    out["n"] = {g: len(ev.probes[g]) for g in GROUPS}
+    return out
 
 
 # --- generation ---------------------------------------------------------------------------------
