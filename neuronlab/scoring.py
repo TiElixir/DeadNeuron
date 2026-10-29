@@ -137,3 +137,160 @@ def candidate_mask(res: ContrastResult, require_significant: bool = True, hide_g
     if hide_generic:
         m &= ~res.generic
     return m
+
+
+# --- attribution (first-order estimate of mean-ablating each neuron) ------------------------------------
+
+from contextlib import contextmanager  # noqa: E402
+
+
+@contextmanager
+def full_precision(lab):
+    """Temporarily run the model in float32 (lossless round trip from bf16 / fp16)."""
+    orig = next(lab.model.parameters()).dtype
+    if orig == torch.float32:
+        yield
+        return
+    lab.model.float()
+    try:
+        yield
+    finally:
+        lab.model.to(orig)
+
+
+def _attribution_pass(lab, probes, abar: torch.Tensor, batch_size: int, exclude_first: bool) -> np.ndarray:
+    from .evaluation import probe_sequences
+    from .prompts import position_ids
+
+    seqs, starts = probe_sequences(lab, probes)
+    n_total, L = len(seqs), lab.adapter.n_layers
+    D = lab.adapter.d_mlp(0)
+    eff = torch.zeros(L, D, device=lab.device, dtype=torch.float32)
+    pad = lab.tokenizer.pad_token_id
+    for s in range(0, n_total, batch_size):
+        chunk = seqs[s:s + batch_size]
+        T = max(len(q) for q in chunk)
+        ids = torch.full((len(chunk), T), pad, dtype=torch.long)
+        att = torch.zeros((len(chunk), T), dtype=torch.long)
+        tgt = torch.zeros((len(chunk), T), dtype=torch.bool)
+        valid = torch.zeros((len(chunk), T), dtype=torch.bool)
+        for b, q in enumerate(chunk):
+            ids[b, T - len(q):] = torch.tensor(q)
+            att[b, T - len(q):] = 1
+            tgt[b, T - len(q) + starts[s + b]:] = True
+            valid[b, T - len(q) + (1 if exclude_first else 0):] = True
+        deltas, acts, handles = {}, {}, []
+        for i in range(L):
+            def pre(mod, args, i=i):
+                x = args[0]
+                deltas[i] = torch.zeros_like(x, requires_grad=True)  # d(M)/d(delta) = total d(M)/d(a)
+                acts[i] = x.detach()
+                return (x + deltas[i],) + tuple(args[1:])
+
+            handles.append(lab.adapter.neuron_site(i).register_forward_pre_hook(pre))
+        try:
+            with torch.enable_grad():
+                logits = lab.model(input_ids=ids.to(lab.device), attention_mask=att.to(lab.device),
+                                   position_ids=position_ids(att).to(lab.device), use_cache=False).logits
+                lp = torch.log_softmax(logits[:, :-1].float(), -1).gather(-1, ids[:, 1:].to(lab.device)[..., None])[..., 0]
+                M = (lp * tgt[:, 1:].to(lab.device)).sum() / n_total  # mean over probes of log P(target)
+                M.backward()
+        finally:
+            for h in handles:
+                h.remove()
+        vmask = valid.to(lab.device)[..., None]
+        for i in range(L):
+            eff[i] += ((abar[i].to(acts[i].dtype) - acts[i]).float() * deltas[i].grad.float() * vmask).sum((0, 1))
+        del deltas, acts, logits, lp, M
+    return eff.cpu().numpy()
+
+
+def attribution(lab, probes, abar, batch_size: int = 2, exclude_first: bool = True, precision: str = "float32"):
+    """effect_n ~ sum_positions (abar_n - a_n) * dM/da_n   with  M = mean_probes log P(target | prompt).
+
+    A first-order (attribution-patching) estimate of the change in M from mean-ablating neuron n.
+    Negative = ablation lowers M. Gradients are taken w.r.t. activations only (parameters are frozen).
+    Tries float32 first and falls back to the model's own dtype on OOM. Returns (effects [L, D], precision_used).
+    """
+    abar = torch.as_tensor(abar, dtype=torch.float32, device=lab.device)
+    if precision == "float32":
+        try:
+            with full_precision(lab):
+                return _attribution_pass(lab, probes, abar, batch_size, exclude_first), "float32"
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+    return _attribution_pass(lab, probes, abar, 1, exclude_first), str(lab.dtype).replace("torch.", "")
+
+
+def attribution_scores(lab, probes_pos, probes_neg, abar, **kw) -> dict:
+    """Attribution on the positive and negative probes, and their difference.
+
+    attr_sel = effect_on_M_pos - effect_on_M_neg. More negative = ablation hurts the positive concept more.
+    """
+    pos, prec = attribution(lab, probes_pos, abar, **kw)
+    neg, _ = attribution(lab, probes_neg, abar, **kw)
+    return dict(attr_pos=pos, attr_neg=neg, attr_sel=pos - neg, precision=prec)
+
+
+# --- weight-based scores (no forward pass) -------------------------------------------------------
+
+@torch.no_grad()
+def logit_lens(lab, layer: int, neurons: list[int], k: int = 20):
+    """Top / bottom-k tokens of each neuron: unembed(final_norm.weight * out_dir_n). Returns ids, scores."""
+    W_U = lab.adapter.unembed()
+    g = getattr(lab.adapter.final_norm(), "weight", None)
+    dirs = lab.out_dirs(layer)[torch.as_tensor(neurons, device=lab.device)]
+    if g is not None:
+        dirs = dirs * g.float()
+    logits = (dirs.to(W_U.dtype) @ W_U.T).float()
+    top, bot = logits.topk(k, dim=-1), (-logits).topk(k, dim=-1)
+    return dict(top_ids=top.indices.cpu().numpy(), top_vals=top.values.cpu().numpy(),
+                bottom_ids=bot.indices.cpu().numpy(), bottom_vals=(-bot.values).cpu().numpy())
+
+
+def keyword_token_ids(tokenizer, keywords) -> set[int]:
+    """Single-token encodings of each keyword (bare, space-prefixed, capitalised)."""
+    out = set()
+    for kw in keywords:
+        for v in {kw, " " + kw, kw.capitalize(), " " + kw.capitalize()}:
+            ids = tokenizer(v, add_special_tokens=False)["input_ids"]
+            if len(ids) == 1:
+                out.add(ids[0])
+    return out
+
+
+@torch.no_grad()
+def keyword_lens_scores(lab, keywords, layers=None, k: int = 100, chunk: int = 512) -> np.ndarray:
+    """[L, D] count of concept keyword tokens among each neuron's top-k logit-lens tokens (0 elsewhere)."""
+    ids = torch.tensor(sorted(keyword_token_ids(lab.tokenizer, keywords)), device=lab.device)
+    L, D = lab.adapter.n_layers, lab.adapter.d_mlp(0)
+    out = np.zeros((L, D), np.float32)
+    for layer in (layers if layers is not None else range(L)):
+        for s in range(0, D, chunk):
+            top = logit_lens(lab, layer, list(range(s, min(s + chunk, D))), k)["top_ids"]
+            out[layer, s:s + chunk] = np.isin(top, ids.cpu().numpy()).sum(1)
+    return out
+
+
+# --- combined rank ------------------------------------------------------------------------------
+
+def zscore(x: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """z-score using the masked population only."""
+    sel = x[mask].astype(np.float64)
+    mu, sd = sel.mean(), sel.std()
+    return (x - mu) / (sd if sd > 0 else 1.0)
+
+
+def combined_score(components: dict[str, np.ndarray], weights: dict[str, float] | None, mask: np.ndarray) -> np.ndarray:
+    """Weighted mean of per-component z-scores computed over the candidate set; -inf outside it.
+
+    Default (spec): equal weights on |d| and -attr_selectivity, candidates = significant & non-generic.
+    """
+    weights = weights or {k: 1.0 for k in components}
+    tot = sum(weights.values())
+    out = np.zeros_like(next(iter(components.values())), dtype=np.float64)
+    for name, w in weights.items():
+        out += w * zscore(components[name], mask)
+    out /= tot
+    out[~mask] = -np.inf
+    return out
