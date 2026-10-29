@@ -22,10 +22,15 @@ def settings_hash(settings: dict) -> str:
 
 
 def _atomic(path: Path, write):
+    """write(fileobj) into a temp file, then rename over `path`; a failed write leaves `path` untouched."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    write(tmp)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as f:
+            write(f)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 class RunStore:
@@ -44,7 +49,7 @@ class RunStore:
     def save_arrays(self, name: str, arrays: dict, meta: dict | None = None) -> None:
         payload = dict(arrays)
         payload["__meta__"] = np.frombuffer(json.dumps(meta or {}, default=str).encode(), dtype=np.uint8)
-        _atomic(self.dir / f"{name}.npz", lambda p: np.savez(open(p, "wb"), **payload))
+        _atomic(self.dir / f"{name}.npz", lambda f: np.savez(f, **payload))
 
     def load_arrays(self, name: str):
         path = self.dir / f"{name}.npz"
@@ -56,7 +61,7 @@ class RunStore:
         return arrays, meta
 
     def save_json(self, name: str, obj) -> None:
-        _atomic(self.dir / f"{name}.json", lambda p: p.write_text(json.dumps(obj, indent=2, default=str)))
+        _atomic(self.dir / f"{name}.json", lambda f: f.write(json.dumps(obj, indent=2, default=str).encode()))
 
     def load_json(self, name: str):
         path = self.dir / f"{name}.json"
@@ -64,7 +69,7 @@ class RunStore:
 
     # recordings: per-prompt matrix as float16 .npy, everything else float32 .npz --------------------
     def save_recording(self, name: str, rec: SetRecording) -> None:
-        _atomic(self.dir / f"{name}.acts.npy", lambda p: np.save(open(p, "wb"), rec.acts))
+        _atomic(self.dir / f"{name}.acts.npy", lambda f: np.save(f, rec.acts))
         arrays = dict(valid=rec.valid, mean=rec.mean, var=rec.var, frac_pos=rec.frac_pos)
         if rec.resid is not None:
             arrays["resid"] = rec.resid
