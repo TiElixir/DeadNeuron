@@ -125,3 +125,19 @@ def test_reply_perplexity_is_computed_without_hooks(lab):
     reps = generate_replies(lab, ["Who are you?"], max_new_tokens=5)
     p = reply_perplexity(lab, ["Who are you?"], [reps[0][1]])
     assert p.shape == (1,) and p[0] >= 1.0
+
+
+def test_memory_efficient_logprobs_match_full_logits_reference(lab, preset):
+    """sequence_logprobs now applies the head only at scored positions; it must equal the naive full-logits result."""
+    import torch
+    from neuronlab.evaluation import probe_sequences, sequence_logprobs
+    from neuronlab.runtime import forward_logits
+    probes = preset.probes_positive + preset.probes_control
+    seqs, starts = probe_sequences(lab, probes)
+    got, counts = sequence_logprobs(lab, seqs, starts, batch_size=3)
+    for i, (q, s0) in enumerate(zip(seqs, starts)):
+        ids = torch.tensor([q])
+        lg = forward_logits(lab, ids, torch.ones_like(ids))
+        lp = torch.log_softmax(lg[0, :-1].float(), -1).gather(-1, ids[0, 1:, None])[:, 0]
+        assert counts[i] == len(q) - s0
+        assert abs(float(lp[s0 - 1:].sum()) - got[i]) < 1e-3

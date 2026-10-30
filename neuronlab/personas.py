@@ -210,7 +210,7 @@ def _generate_batch(lab, cfg: SweepConfig, items, alpha: float):
 
 
 def reply_stats(lab, cfg: SweepConfig, replies) -> list[dict]:
-    ppl = reply_perplexity(lab, [cfg.prompt] * len(replies), [r[1] for r in replies], cfg.system, 32)
+    ppl = reply_perplexity(lab, [cfg.prompt] * len(replies), [r[1] for r in replies], cfg.system, 16)
     out = []
     for (text, ids), p in zip(replies, ppl):
         rep = repetition_rate(ids)

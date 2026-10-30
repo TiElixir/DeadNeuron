@@ -12,7 +12,7 @@ import torch
 
 from .interventions import Entry, InterventionSpec, ResidualEdit, intervene
 from .prompts import Probe, PromptSet, encode_chat
-from .runtime import clean_reply, forward_logits, generate_ids
+from .runtime import clean_reply, forward_hidden, forward_logits, generate_ids, selected_logprobs
 
 GROUPS = ("pos", "neg", "ctl")
 RATIO_UNSTABLE_BELOW = 0.05  # |delta_neg| below this (nats) and the ratio is flagged as unstable
@@ -43,10 +43,10 @@ def sequence_logprobs(lab, seqs: list[list[int]], starts: list[int], batch_size:
             att[b, T - len(q):] = 1
             boundary[b] = T - len(q) + starts[s + b]
         with intervene(lab, spec, boundary=boundary):
-            logits = forward_logits(lab, ids, att, boundary=boundary)
-        lp = torch.log_softmax(logits[:, :-1].float(), -1).gather(-1, ids[:, 1:].to(lab.device)[..., None])[..., 0]
+            hidden = forward_hidden(lab, ids, att, boundary=boundary)
         pos = torch.arange(1, T, device=lab.device)[None, :]
         sel = (pos >= boundary.to(lab.device)[:, None]) & att[:, 1:].bool().to(lab.device)
+        lp = selected_logprobs(lab, hidden[:, :-1], ids[:, 1:].to(lab.device), sel)
         sums[s:s + len(chunk)] = (lp * sel).sum(1).cpu().numpy()
         counts[s:s + len(chunk)] = sel.sum(1).cpu().numpy()
     return sums, counts

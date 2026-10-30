@@ -23,6 +23,30 @@ def forward_logits(lab, input_ids, attention_mask, boundary=None):
     return out.logits
 
 
+@torch.no_grad()
+def forward_hidden(lab, input_ids, attention_mask, boundary=None):
+    """Final-norm hidden states [B, T, d_model] (the output head is applied separately, only where needed)."""
+    st = active_state(lab)
+    if st is not None:
+        st.reset(boundary)
+    return lab.model.base_model(input_ids=input_ids.to(lab.device), attention_mask=attention_mask.to(lab.device),
+                                position_ids=position_ids(attention_mask).to(lab.device), use_cache=False).last_hidden_state
+
+
+@torch.no_grad()
+def selected_logprobs(lab, hidden, targets, select, chunk: int = 1024):
+    """log P(targets) at the selected positions only. hidden [B,T,d] predicts targets [B,T] (already shifted);
+    select [B,T] bool. Returns a [B,T] float tensor (0 where not selected). Memory is chunk x vocab, not B x T x vocab."""
+    head = lab.model.get_output_embeddings()
+    out = torch.zeros(select.shape, dtype=torch.float32, device=hidden.device)
+    idx = select.nonzero(as_tuple=True)
+    for s in range(0, idx[0].numel(), chunk):
+        b, t = idx[0][s:s + chunk], idx[1][s:s + chunk]
+        logits = head(hidden[b, t]).float()
+        out[b, t] = logits.gather(-1, targets[b, t][:, None])[:, 0] - torch.logsumexp(logits, -1)
+    return out
+
+
 class RepetitionStop(StoppingCriteria):
     """Per-row stop when the generated tail is one block repeated 3 times (exact repetition)."""
 
