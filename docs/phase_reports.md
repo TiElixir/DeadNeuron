@@ -103,3 +103,34 @@ Steering toward "land" with u[22] at layer 22 (all alphas, none selected): alpha
 - Keyword lens only uses keywords that encode to one token; multi-token keywords are ignored.
 - The ablation-curve chart was checked structurally (label collisions, palette validator: pass in both modes, aqua
   contrast WARN covered by direct labels). No browser was available to screenshot it.
+
+## Phase 3: UI
+
+**Built:** `app/Home.py` plus seven pages (Model architecture, Experiment setup, Layer overview, Layer drill-down,
+Neuron card, Basket and ablation lab, Directions and steering), a persistent sidebar (model path and load status, device
+and dtype, active run, GPU memory, basket size), background jobs with progress, ETA and cancel for recording and
+evaluation, and `neuronlab/viz` (pure Plotly / HTML builders). Run: `streamlit run app/Home.py`.
+Dark theme from `.streamlit/config.toml`, with the minimalist-ui principles applied inside it (warm off-black, hairline
+borders, no shadows / gradients / emoji, serif titles, mono for IDs, colour only where it carries meaning).
+Chart colours are categorical slots 1 to 3 of the reference palette, run through the validator in both modes.
+
+**No recomputation on reload:** runs reopen from disk via `load_experiment`; basket evaluations are stored by the hash of
+their inputs (`eval_<key>.json`) and shown as "Loaded from disk". One model copy (`st.cache_resource`, max 1) and one
+experiment in memory.
+
+**Tests:** 106 pass / 2 skipped with the model; AppTest renders all 8 scripts against the real model (entering through
+`Home.py` and switching pages), checks the no-run message, the cached-evaluation path and the neuron card / drill-down with
+a selected neuron. `tests/test_figures.py` builds every figure in both themes. The server starts headless (health and
+index return 200).
+
+**Bugs the tests caught:** `_axes` passed `gridcolor` twice (broke the neuron card and the evaluation chart).
+
+**Not verified (no browser in this environment):** clicking inside a Plotly chart (architecture block, layer bar, grid
+cell), `st.data_editor` interaction, the fragment polling a running background job, and how the pages look. Each chart
+click has a plain selector next to it (layer / neuron number inputs, table selection), so no function depends on a click.
+Treat the first manual click-through as part of the acceptance check.
+
+**Known issues**
+- Evaluation cancel is checked between random seeds and curve points, not inside a single forward pass.
+- A background job holds the GPU lock, so other pages wait while a recording or evaluation runs.
+- Persona mode is not offered in Experiment setup until the persona pages exist (Phase 4).
