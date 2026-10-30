@@ -328,12 +328,13 @@ def generate_replies_rows(lab, prompts: list[str], specs: list, system=None, max
 @torch.no_grad()
 def reply_perplexity(lab, prompts: list[str], reply_ids: list[list[int]], system=None, batch_size=None) -> np.ndarray:
     """Per-reply perplexity under the *unsteered* model."""
-    seqs, starts = [], []
+    seqs, starts, cache = [], [], {}
     for p, r in zip(prompts, reply_ids):
-        e = encode_chat(lab.tokenizer, [p], system, "last_token")
-        pids = e.input_ids[0][e.attention_mask[0].bool()].tolist()
-        seqs.append(pids + r)
-        starts.append(len(pids))
+        if p not in cache:  # sweeps score thousands of replies to the same prompt
+            e = encode_chat(lab.tokenizer, [p], system, "last_token")
+            cache[p] = e.input_ids[0][e.attention_mask[0].bool()].tolist()
+        seqs.append(cache[p] + r)
+        starts.append(len(cache[p]))
     sums, counts = sequence_logprobs(lab, seqs, starts, batch_size, None)
     return np.where(counts > 0, np.exp(-sums / np.maximum(counts, 1)), np.nan)
 

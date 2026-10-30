@@ -41,7 +41,8 @@ class PromptSet:
     keywords: list[str] = field(default_factory=list)
     n_seed: int = 5  # leading prompts per side that always stay in the training split
     name: str = "unnamed"
-    templates: dict = field(default_factory=dict)  # expansion slots (Phase 2)
+    templates: dict = field(default_factory=dict)  # expansion frames / slots
+    questions: list[str] = field(default_factory=list)  # persona mode: elicitation questions
 
     def __post_init__(self):
         for k in ("positive", "negative", "control", "control_text"):
