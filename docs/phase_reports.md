@@ -134,3 +134,99 @@ Treat the first manual click-through as part of the acceptance check.
 - Evaluation cancel is checked between random seeds and curve points, not inside a single forward pass.
 - A background job holds the GPU lock, so other pages wait while a recording or evaluation runs.
 - Persona mode is not offered in Experiment setup until the persona pages exist (Phase 4).
+
+## Phase 4: personas
+
+**Built:** `neuronlab/personas.py` (heuristic judge, optional LLM judge, manual labels, resumable sweep, target-persona
+search), `presets/ford_persona.yaml` and `presets/personas.yaml` (8 personas, 16 shared questions), Persona search and
+Persona sweep explorer pages (atlas of dots coloured by category with an up/down toggle, per-layer persona share, searchable
+table, manual label editing, CSV export, pause / resume), `viz/personas.py`.
+Keyword lists shorter than 8 in the brief were padded with 1 or 2 words (cat, Moon, knight, submarine, oak, smallpox).
+
+**Tests:** 140 pass / 2 skipped with the model; 28 persona tests including: a sweep killed part-way and resumed gives
+exactly the records of an uninterrupted sweep; the LLM judge is off unless both the key and the enable flag are set; the
+judge on 17 hand-written replies.
+
+### Ford persona search (real model; 11 training and 5 held-out questions; steering tested WITHOUT the persona prompt)
+
+Reference (persona system prompt on the held-out questions): success 0.80, AI claims 0.00. Baseline: 0.00 success, 1.00 AI claims.
+Success = persona keyword AND no AI claim AND coherent (repeats <= 30%, reply perplexity <= 40). Every row has a random control.
+n = 5 per row, so each rate moves in steps of 0.2.
+
+- **Run 1** chose direction layers by held-out AUROC with ties to the lowest index. AUROC was 1.0 at many layers, so it
+  picked layers 0, 1, 2 (token-identity directions). Best row: direction steering alpha 1.0 at layer 2, success 0.40 vs 0.00
+  random. Reading the replies, that was a **topic attractor**: every question got "The Mustang is a popular American car,
+  first produced by Henry Ford Company..." in the third person, repeated.
+- **Run 2** (changed after seeing run 1, disclosed): ties broken by the held-out standardised margin of the projections.
+  Chosen layers 23, 21, 22. Best row: **single neuron, layer 21 neuron 527, alpha 1.0: success 0.40 vs random-neuron control
+  0.07**, 100% first-person, keyword 1.00, AI claims 0.00, but coherent only 0.40 with 31% repeated 4-grams. Replies are a
+  vehicle persona ("I am a vehicle-plate traffic light vehicle... designed for road traffic") that loops, not a Mustang.
+  Direction steering at alpha 0.5 (layer 22) moves toward "automotive industry" but still says "I am Qwen" (success 0.20,
+  AI claim 0.80). Groups of the most aligned neurons and alpha >= 1.0 pushes break the model (reply perplexity in the
+  thousands).
+- **Conclusion:** neither method comes close to the system prompt (0.80). A single neuron produced the clearest partial
+  persona, at the edge of coherence, from 5 questions.
+
+### Persona sweep (256 random neurons per layer x 24 layers x both directions = 12,288 replies, "Who are you?", default system prompt)
+
+- **Resumability:** the run was killed with SIGKILL at 960 saved records (15 batches), restarted, and continued with exactly
+  the remaining 11,328 first-rung items. Checkpoint writes are atomic (no partial file after the kill).
+- **Time:** the resumed run took 111.9 min in total (11,328 first-rung replies plus all retries).
+  Retries dominate: only 1,650 of 12,288 replies (13.4%) were coherent at alpha 1.25, 2,521 more at 1.0, 3,149 at 0.75, 4,968
+  ended at 0.5 (of which 1,737 were still incoherent, labelled broken). Pushing by alpha x r_L is too strong for this small
+  model at the top of the ladder.
+- **Labels:** first run of the heuristic judge (v1): assistant 7,074, persona 1,516, off_topic 1,874, broken 1,824.
+  Its top-10 list was junk ("I am a 2,500,000" as a persona; "a computer program created by Alibaba Cloud" as a persona).
+  I made the judge stricter (v2, changed after seeing results, disclosed; it only removes persona labels): a persona needs a
+  plausible name (not numbers, not generic AI nouns) and no AI marker in the first 300 characters. **v2: assistant 7,992,
+  persona 491, off_topic 1,981, broken 1,824.** Persona labels are split evenly by direction (249 down, 242 up).
+- The fixed ranking criterion (strongest alpha, then fluency) still surfaces degenerate text such as "I am the Quine and the
+  Quine in the Quine", because alpha 1.25 replies are the ones closest to breaking. So the 10 below are **my manual picks
+  after reading a random sample of the 322 persona-labelled replies with under 15% repetition**, not the heuristic's output.
+  Heuristic labels have not been verified by anyone else.
+
+| # | layer | neuron | direction | alpha | reply (start) |
+|---|---|---|---|---|---|
+| 1 | 8 | 750 | up | 0.75 | "I am a human. My name is Liang. I am a Chinese person." |
+| 2 | 4 | 421 | up | 0.75 | "Hello, I am a 15-year old girl." |
+| 3 | 7 | 4763 | up | 0.75 | "I am a 19-year-old." |
+| 4 | 8 | 2589 | up | 0.75 | "Yes, I am a very young person, about 12 years old, born in 2000" |
+| 5 | 11 | 4208 | down | 0.75 | "I am a member of the United States Army." |
+| 6 | 18 | 4798 | up | 0.75 | "As an ancient Chinese oracle code, I am known as the 'Oracle of Zhou'..." |
+| 7 | 3 | 637 | down | 0.75 | "I am a creative, passionate, and experienced digital marketing strategist..." |
+| 8 | 10 | 99 | up | 0.5 | "I am a Python and Jupyter notebook creator..." |
+| 9 | 9 | 1662 | down | 0.5 | "I am a Chinese citizen, and I am very happy to be here." |
+| 10 | 10 | 2050 | up | 0.75 | "I am ChatGPT." (a different AI identity, listed for completeness) |
+
+Pattern: the clearest identity changes are **human-like identities (age, nationality, occupation)** from layers 3 to 11, not
+exotic objects. One prompt, one seed per neuron, greedy decoding, so these are single observations.
+
+**Known issues**
+- The sweep's wall time includes the retries; the first-rung ETA shown before starting (about 17 min) covers only 1 of up to
+  4 rungs, and the real total was several times that.
+- The persona-sweep ETA in the UI is measured from one timed batch and does not predict retries.
+- Judge v2 is still a keyword heuristic; unverified by a person.
+- Page interactions (pause / resume buttons, atlas clicks, label saving) are tested headlessly only.
+
+## Phase 5: polish
+
+- `README.md` covers installation, pointing at a model, adding an adapter, every score and metric in plain language,
+  and the known limitations (polysemanticity, small prompt sets, one-prompt bias in sweeps, batch dependence,
+  unverified heuristic labels, plus the rest).
+- **CLI and UI give the same numbers for the same run:** `python -m neuronlab.cli ablate aeroplane_vs_submarine -k 50
+  --mode mean --sign pos` and the UI's `evaluate_basket` both give Δ_pos -0.8864, Δ_neg -0.1688, Δ_control -0.0717, z_pos -4.04.
+- Bugs found late: persona pages ignored the configured runs directory (fixed); `sequence_logprobs` materialised the whole
+  vocabulary at every position and ran out of memory on 160-token replies (fixed, numbers unchanged, tested against the
+  naive version).
+- Final test run: 140 passed, 2 skipped (with the real model); 111 passed without it.
+
+## Deviations from the brief (all)
+1. The model was not on disk, so after you said "download the model if needed" it was fetched once into `models/`
+   (gitignored). The library still loads with `local_files_only=True`.
+2. GPU is 4 GB, not 12 GB. Everything fit; the timing targets were met by a wide margin.
+3. Template expansion was done in Phase 1, not Phase 2 (5 seeds leave no held-out split).
+4. Per-token activations for display prompts are recomputed on demand instead of stored.
+5. Persona mode is not a toggle on the Experiment setup page; persona work lives on the two persona pages.
+6. The layer-selection tie-break and the judge strictness were changed after seeing results; both are disclosed above and
+   the earlier behaviour is still available (`layer_rule="auroc"`, `strict=False`).
+7. No browser was available: charts were checked structurally and pages headlessly, not by clicking.

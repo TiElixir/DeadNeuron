@@ -130,3 +130,22 @@ def test_sweep_stops_retrying_once_coherent(lab, tmp_path):
     rec = run_sweep(lab, RunStore(tmp_path, "fp", "ph", {}), cfg)
     assert all(len(r["attempts"]) == 1 and r["resolved"] and r["attempts"][0]["alpha"] == 1.25 for r in rec.values())
     assert len(rec) == len(sample_items(lab, cfg)) and item_key(0, 1, 1) == "0:1:+1"
+
+
+@pytest.mark.parametrize("text,cat", [
+    ("I am a 2,500,000", "off_topic"),
+    ("I am a 100 billion-1000", "off_topic"),
+    ("I am a computer program created by Alibaba Cloud. I am a helpful assistant.", "assistant"),
+    ("I'm an artificial entity, a language model and a language model platform.", "assistant"),
+    ("I am a model named Alibaba, designed to help people.", "assistant"),
+    ("I am a pirate captain, not an AI assistant.", "assistant"),  # strict: any AI marker in the first 300 chars
+    ("I am a pirate captain who sails the high seas.", "persona"),
+    ("I'm an oak tree standing in the forest.", "persona"),
+])
+def test_strict_judge_v2_rejects_numbers_and_generic_ai_nouns(text, cat):
+    assert judge_reply(text)["category"] == cat
+
+
+def test_v1_judge_is_still_available_for_comparison():
+    assert judge_reply("I am a 2,500,000", strict=False)["category"] == "persona"
+    assert judge_reply("I am a computer program created by Alibaba Cloud.", strict=False)["category"] == "persona"

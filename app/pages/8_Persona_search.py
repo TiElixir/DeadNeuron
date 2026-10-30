@@ -4,7 +4,7 @@ import re
 import pandas as pd
 import streamlit as st
 
-from common import ROOT, job_panel, page, start_job
+from common import ROOT, RUNS, job_panel, page, start_job
 from neuronlab.personas import PersonaSpec, load_personas, persona_search, persona_search_store
 from neuronlab.pipeline import ensure_calibration
 
@@ -43,13 +43,13 @@ n_random = int(st.number_input("Random controls per row", 1, 6, 3))
 max_new = int(st.number_input("Max new tokens", 40, 200, 100))
 
 if ready:
-    store = persona_search_store(lab, persona)
+    store = persona_search_store(lab, persona, runs_dir=RUNS)
     res = store.load_json("search")
     if res is None:
         st.write("No saved search for this persona yet. It takes a few minutes on a small GPU.")
         if st.button("Run persona search", type="primary"):
             def job(progress, cancel):
-                ensure_calibration(lab)
+                ensure_calibration(lab, RUNS)
                 out = persona_search(lab, persona, n_random=n_random, max_new=max_new, progress=progress, cancel=cancel)
                 store.save_json("search", out)
                 return True

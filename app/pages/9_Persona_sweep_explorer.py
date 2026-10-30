@@ -4,7 +4,7 @@ from collections import Counter
 import pandas as pd
 import streamlit as st
 
-from common import MODE, get_job, gpu_lock, job_panel, page, start_job
+from common import MODE, RUNS, get_job, gpu_lock, job_panel, page, start_job
 from neuronlab.personas import (CATEGORIES, SweepConfig, estimate_eta, interesting_personas, llm_judge, llm_judge_available,
                                 load_labels, run_sweep, set_label, sweep_size, sweep_status, sweep_store, sweep_table)
 from neuronlab.recording import Cancelled
@@ -36,7 +36,7 @@ if not layers or not alphas:
 cfg = SweepConfig(layers=layers, neurons_per_layer=per, alphas=alphas, rep_threshold=float(rep_thr), ppl_threshold=float(ppl_thr),
                   batch_size=batch, checkpoint_every=ck)
 sz = sweep_size(lab, cfg)
-store = sweep_store(lab, cfg)
+store = sweep_store(lab, cfg, RUNS)
 status = sweep_status(store)
 st.markdown(f"**{sz['items']:,}** pushes at the first alpha (each neuron up and down), up to **{sz['max_generations']:,}** generations "
             f"counting retries. A full sweep of this model would be **{sz['full_sweep_items']:,}** replies. "
@@ -44,7 +44,7 @@ st.markdown(f"**{sz['items']:,}** pushes at the first alpha (each neuron up and 
             f"prompts but not this one is missed.")
 if st.button("Measure speed for an ETA"):
     with st.spinner("Timing one batch"), gpu_lock():
-        ensure_calibration(lab)
+        ensure_calibration(lab, RUNS)
         ss.eta = estimate_eta(lab, cfg, sz["items"])
 if ss.get("eta"):
     e = ss.eta
@@ -56,7 +56,7 @@ b1, b2, b3 = st.columns([1, 1, 3])
 label = "Resume" if status and status["status"] != "finished" else "Start"
 if b1.button(label, type="primary", disabled=running or bool(status and status["status"] == "finished")):
     def job(progress, cancel):
-        ensure_calibration(lab)
+        ensure_calibration(lab, RUNS)
         return run_sweep(lab, store, cfg, "sweep", progress, cancel) and True
     start_job("Sweep", job)
     st.rerun()

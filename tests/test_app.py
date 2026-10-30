@@ -99,7 +99,7 @@ def test_persona_pages_render_empty_and_with_a_saved_sweep(run_dir, real_lab):
     import sys
     from neuronlab.personas import SweepConfig, run_sweep, sweep_store
     from neuronlab.pipeline import ensure_calibration
-    ensure_calibration(real_lab)
+    ensure_calibration(real_lab, os.environ["NEURONLAB_RUNS_DIR"])
     cfg = SweepConfig(layers=[0, 1], neurons_per_layer=8)
     store = sweep_store(real_lab, cfg, os.environ["NEURONLAB_RUNS_DIR"])
     run_sweep(real_lab, store, cfg)
