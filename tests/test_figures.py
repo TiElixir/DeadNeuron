@@ -51,3 +51,23 @@ def test_token_html_escapes_and_dims_uncounted_tokens():
     assert "<script>" not in out and "&lt;script&gt;" in out
     assert out.count("background:rgba(") == 2  # only counted tokens are shaded
     assert "217,89,38" in out and "57,135,229" in out  # orange for negative, blue for positive
+
+
+def _rows():
+    cats = ["persona", "assistant", "broken", "off_topic"]
+    return [dict(key=f"{l}:{n}:{s:+d}", layer=l, neuron=n, sign=s, category=cats[(l + n) % 4], persona_name="cat", alpha=1.0)
+            for l in range(4) for n in range(0, 200, 7) for s in (1, -1)]
+
+
+@pytest.mark.parametrize("mode", ["dark", "light"])
+def test_persona_figures(mode):
+    from neuronlab.viz.personas import CATEGORY_COLOR, atlas_figure, persona_share_figure
+    rows = _rows()
+    f = atlas_figure(rows, 4, 4864, 1, mode, cols=2)
+    dots = sum(len(t.x) for t in f.data)
+    assert dots == len([r for r in rows if r["sign"] == 1])  # one dot per neuron, only the chosen direction
+    assert all(t.customdata[0][0].endswith("+1") for t in f.data)
+    share = persona_share_figure(rows, 4, mode)
+    n_persona = [sum(1 for r in rows if r["layer"] == l and r["category"] == "persona") / sum(1 for r in rows if r["layer"] == l) for l in range(4)]
+    assert list(share.data[0].y) == pytest.approx(n_persona)
+    assert len(set(CATEGORY_COLOR[mode].values())) == 4

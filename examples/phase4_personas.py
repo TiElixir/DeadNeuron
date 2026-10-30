@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from neuronlab.model_loader import ROOT, load_lab
-from neuronlab.personas import (SweepConfig, estimate_eta, interesting_personas, load_labels, load_personas, persona_search,
+from neuronlab.personas import (SweepConfig, persona_search_store, sweep_store, estimate_eta, interesting_personas, load_labels, load_personas, persona_search,
                                 run_sweep, sweep_size, sweep_table)
 from neuronlab.pipeline import ensure_calibration
 from neuronlab.storage import RunStore
@@ -27,7 +27,7 @@ tick = lambda d, t, eta: print(f"\r  {d}/{t}  eta {eta:6.0f}s", end="", flush=Tr
 if cmd == "search":
     name = sys.argv[2] if len(sys.argv) > 2 else "Ford Mustang"
     persona = next(p for p in load_personas(ROOT / "presets" / "personas.yaml") if p.name.lower() == name.lower())
-    store = RunStore(ROOT / "runs", lab.fingerprint, "persona_search", {"persona": persona.name, "prompt": persona.system_prompt, "dtype": str(lab.dtype), "layer_rule": RULE} if RULE != "auroc" else {"persona": persona.name, "prompt": persona.system_prompt, "dtype": str(lab.dtype)})
+    store = persona_search_store(lab, persona, RULE)
     t0 = time.time()
     res = store.load_json("search")
     if res is None:
@@ -44,7 +44,7 @@ if cmd == "search":
 elif cmd in ("sweep", "report"):
     per = int(sys.argv[2]) if len(sys.argv) > 2 else 256
     cfg = SweepConfig(layers=list(range(lab.adapter.n_layers)), neurons_per_layer=per)
-    store = RunStore(ROOT / "runs", lab.fingerprint, "persona_sweep", {"per_layer": per, "dtype": str(lab.dtype), "prompt": cfg.prompt})
+    store = sweep_store(lab, cfg)
     if cmd == "sweep":
         sz = sweep_size(lab, cfg)
         eta = estimate_eta(lab, cfg, sz["items"])

@@ -451,3 +451,31 @@ def persona_search(lab, persona: PersonaSpec, seed: int = 0, dir_alphas=(0.1, 0.
                 separation=sep.tolist(), margin=margin.tolist(), layer_rule=layer_rule, n_random=n_random, rows=rows, examples=examples,
                 n_significant_neurons=int(contrast.significant.sum()),
                 n=dict(train=len(tr_q), heldout=len(ho_q)), thresholds=dict(rep=0.30, ppl=40.0))
+
+
+# --- stores shared by the driver script, the CLI and the UI (so they read the same files) -----------------------
+
+def persona_search_store(lab, persona: PersonaSpec, layer_rule: str = "auroc_then_margin", runs_dir=None) -> RunStore:
+    from .model_loader import ROOT
+    s = {"persona": persona.name, "prompt": persona.system_prompt, "dtype": str(lab.dtype)}
+    if layer_rule != "auroc":  # run 1 (lowest-index ties) keeps its original key
+        s["layer_rule"] = layer_rule
+    return RunStore(runs_dir or ROOT / "runs", lab.fingerprint, "persona_search", s)
+
+
+def sweep_store(lab, cfg: SweepConfig, runs_dir=None) -> RunStore:
+    """One folder per sweep configuration. Fields that equal the defaults are left out of the key."""
+    from .model_loader import ROOT
+    s = {"per_layer": cfg.neurons_per_layer, "dtype": str(lab.dtype), "prompt": cfg.prompt}
+    default = SweepConfig(layers=list(range(lab.adapter.n_layers)))
+    for f in ("layers", "alphas", "signs", "seed", "system", "max_new_tokens", "rep_threshold", "ppl_threshold"):
+        if getattr(cfg, f) != getattr(default, f):
+            s[f] = getattr(cfg, f)
+    return RunStore(runs_dir or ROOT / "runs", lab.fingerprint, "persona_sweep", s)
+
+
+def sweep_status(store: RunStore) -> dict | None:
+    st = store.load_json("sweep_state")
+    if st is None:
+        return None
+    return dict(status=st["status"], records=len(st["records"]), batches=st["batches"], throughput=st.get("throughput"))

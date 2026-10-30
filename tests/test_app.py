@@ -92,3 +92,26 @@ def test_neuron_card_and_drilldown_with_a_selected_neuron(run_dir, real_lab):
     for page in ("app/pages/5_Neuron_card.py", "app/pages/4_Layer_drill-down.py"):
         at = run_page(page, run_dir, st_)
         assert not at.exception, (page, [e.value for e in at.exception])
+
+
+def test_persona_pages_render_empty_and_with_a_saved_sweep(run_dir, real_lab):
+    """Page 9 shows a saved sweep whose configuration matches the widgets; page 8 renders and lists personas."""
+    import sys
+    from neuronlab.personas import SweepConfig, run_sweep, sweep_store
+    from neuronlab.pipeline import ensure_calibration
+    ensure_calibration(real_lab)
+    cfg = SweepConfig(layers=[0, 1], neurons_per_layer=8)
+    store = sweep_store(real_lab, cfg, os.environ["NEURONLAB_RUNS_DIR"])
+    run_sweep(real_lab, store, cfg)
+    at = run_page("app/pages/8_Persona_search.py", run_dir)
+    assert not at.exception, [e.value for e in at.exception]
+    assert "Ford Mustang" in at.selectbox[2].options or any("Ford Mustang" in o for sb in at.selectbox for o in sb.options)
+    at = run_page("app/pages/9_Persona_sweep_explorer.py", run_dir)
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Nothing to explore" in i.value for i in at.info)  # default 24-layer config has no saved sweep here
+    at.multiselect[0].set_value([0, 1])
+    at.number_input[0].set_value(8)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not any("Nothing to explore" in i.value for i in at.info)
+    assert any("Atlas" in s.value for s in at.subheader)
