@@ -388,3 +388,15 @@ def quick_push_test(exp: Experiment, layer: int, neuron: int, prompts: list[str]
             out.append(dict(prompt=p, condition=name, reply=replies[i][0]))
             i += 1
     return out
+
+
+def ensure_calibration(lab: Lab, runs_dir: str | Path | None = None) -> None:
+    """r_L and control means from control.yaml, cached per model. Needed by push / steering without a concept run."""
+    ctl = PromptSet.from_yaml(ROOT / "presets" / "control.yaml").control
+    store = RunStore(runs_dir or ROOT / "runs", lab.fingerprint, "calibration", {"dtype": str(lab.dtype), "device": lab.device.type})
+    got = store.load_arrays("calibration")
+    if got is None:
+        from .recording import compute_control_means, compute_resid_norms
+        got = ({"resid_norm": compute_resid_norms(lab, ctl), "control_means": compute_control_means(lab, ctl)}, {"n": len(ctl)})
+        store.save_arrays("calibration", *got)
+    set_calibration(lab, got[0]["resid_norm"], got[0]["control_means"])

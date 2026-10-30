@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import yaml
 
-from .directions import Directions, compute_directions, layer_separation, neurons_by_alignment, steering_spec
+from .directions import Directions, compute_directions, layer_margin, layer_separation, neurons_by_alignment, steering_spec
 from .evaluation import generate_replies, generate_replies_rows, repetition_rate, reply_perplexity
 from .interventions import Entry, InterventionSpec, Mode, ResidualEdit, intervene
 from .prompts import encode_chat
@@ -68,6 +68,15 @@ def judge_reply(reply: str, broken: bool = False) -> dict:
     if AI_MARKERS.search(text[:400]):
         return dict(category="assistant", persona_name="")
     return dict(category="off_topic", persona_name="")
+
+
+FIRST_PERSON = re.compile(r"\b(i|i'm|i am|my|me|myself)\b", re.I)
+
+
+def speaks_first_person(reply: str) -> bool:
+    """Diagnostic only (not part of the success metric): does the first sentence speak as 'I'?"""
+    first = re.split(r"(?<=[.!?])\s", (reply or "").strip(), maxsplit=1)[0]
+    return bool(FIRST_PERSON.search(first))
 
 
 AI_CLAIM = re.compile(r"\b(qwen|alibaba|(?:an?\s+)?(?:ai|a\.i\.)\b(?!\s*r)|artificial intelligence|language model|llm|chatbot|"
@@ -320,14 +329,14 @@ def split_questions(qs: list[str], seed: int = 0, train_frac: float = 0.7):
 def score_replies(lab, questions, replies, persona: PersonaSpec, cfg_thr=(0.30, 40.0), system=None) -> dict:
     """Keyword hit rate, AI-claim rate, coherence and a combined success rate over a list of replies."""
     ppl = reply_perplexity(lab, questions, [r[1] for r in replies], system, 32)
-    kw, ai, coh, succ, reps = [], [], [], [], []
+    kw, ai, coh, succ, reps, fp = [], [], [], [], [], []
     for (text, ids), p in zip(replies, ppl):
         rep = repetition_rate(ids)
         c = bool(len(ids) >= 3 and rep <= cfg_thr[0] and np.isfinite(p) and p <= cfg_thr[1])
         k, a = has_keyword(text, persona.keywords), claims_to_be_ai(text)
-        kw.append(k); ai.append(a); coh.append(c); reps.append(rep); succ.append(k and not a and c)
+        kw.append(k); ai.append(a); coh.append(c); reps.append(rep); succ.append(k and not a and c); fp.append(speaks_first_person(text))
     return dict(keyword_rate=float(np.mean(kw)), ai_claim_rate=float(np.mean(ai)), coherent_rate=float(np.mean(coh)),
-                success_rate=float(np.mean(succ)), rep_mean=float(np.mean(reps)),
+                success_rate=float(np.mean(succ)), first_person_rate=float(np.mean(fp)), rep_mean=float(np.mean(reps)),
                 ppl_median=float(np.nanmedian(ppl)) if np.isfinite(ppl).any() else None, n=len(replies))
 
 
@@ -353,7 +362,7 @@ def _rows_generate(lab, questions, specs, system, max_new, chunk=40):
 def persona_search(lab, persona: PersonaSpec, seed: int = 0, dir_alphas=(0.1, 0.25, 0.5, 1.0), n_dir_layers: int = 3,
                    k_neurons: int = 10, neuron_alphas=(0.5, 1.0, 1.25), group_sizes=(3, 10, 30),
                    group_alphas=(0.25, 0.5, 1.0), n_random: int = 3, max_new: int = 100, n_perm: int = 200,
-                   progress=None, cancel=None) -> dict:
+                   layer_rule: str = "auroc_then_margin", progress=None, cancel=None) -> dict:
     """Target-persona search (section 4.8B). Steering is tested on held-out questions WITHOUT the persona system prompt."""
     chk = lambda: cancel and cancel() and (_ for _ in ()).throw(Cancelled())
     tr_q, ho_q = split_questions(persona.questions, seed)
@@ -374,7 +383,12 @@ def persona_search(lab, persona: PersonaSpec, seed: int = 0, dir_alphas=(0.1, 0.
     dirs = compute_directions(rec[("pos", "train")].resid[ok(rec[("pos", "train")])], rec[("neg", "train")].resid[ok(rec[("neg", "train")])])
     sep = layer_separation(dirs, rec[("pos", "heldout")].resid[ok(rec[("pos", "heldout")])], rec[("neg", "heldout")].resid[ok(rec[("neg", "heldout")])])
     contrast = contrast_scores(rec[("pos", "train")].valid_acts(), rec[("neg", "train")].valid_acts(), None, n_perm, seed, device=lab.device)
-    best_layers = [int(l) for l in np.argsort(-sep, kind="stable")[:n_dir_layers]]
+    pr, nr = rec[("pos", "heldout")], rec[("neg", "heldout")]
+    margin = layer_margin(dirs, pr.resid[pr.valid], nr.resid[nr.valid])
+    # "auroc": highest held-out AUROC, ties to the lowest layer index (run 1; ties are common with 5 vs 5 questions).
+    # "auroc_then_margin": same, ties broken by the held-out standardised margin (added after run 1 showed the ties).
+    order = np.argsort(-sep, kind="stable") if layer_rule == "auroc" else np.lexsort((-margin, -np.round(sep, 6)))
+    best_layers = [int(l) for l in order[:n_dir_layers]]
     top_layer = best_layers[0]
     # 4. steering on held-out questions with the DEFAULT system prompt
     rows, examples = [], {}
@@ -434,6 +448,6 @@ def persona_search(lab, persona: PersonaSpec, seed: int = 0, dir_alphas=(0.1, 0.
             step += 1
             if progress: progress(step, n_steps, 0.0)
     return dict(persona=persona.name, seed=seed, train_questions=tr_q, heldout_questions=ho_q, best_layers=best_layers,
-                separation=sep.tolist(), n_random=n_random, rows=rows, examples=examples,
+                separation=sep.tolist(), margin=margin.tolist(), layer_rule=layer_rule, n_random=n_random, rows=rows, examples=examples,
                 n_significant_neurons=int(contrast.significant.sum()),
                 n=dict(train=len(tr_q), heldout=len(ho_q)), thresholds=dict(rep=0.30, ppl=40.0))

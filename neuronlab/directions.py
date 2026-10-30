@@ -43,6 +43,16 @@ def layer_separation(dirs: Directions, pos_resid: np.ndarray, neg_resid: np.ndar
                      for l in range(dirs.unit.shape[0])])
 
 
+def layer_margin(dirs: Directions, pos_resid: np.ndarray, neg_resid: np.ndarray) -> np.ndarray:
+    """Held-out standardised margin per layer: (mean_pos - mean_neg) / pooled std of the projections.
+    Unlike AUROC it does not saturate at 1.0, so it can break ties between perfectly separating layers."""
+    out = []
+    for l in range(dirs.unit.shape[0]):
+        a, b = pos_resid[:, l] @ dirs.unit[l], neg_resid[:, l] @ dirs.unit[l]
+        out.append((a.mean() - b.mean()) / np.sqrt((a.var(ddof=1) + b.var(ddof=1)) / 2 + 1e-12))
+    return np.array(out)
+
+
 def best_layer(sep: np.ndarray) -> int:
     """Layer with the highest held-out AUROC (lowest index on ties)."""
     return int(np.argmax(sep))
