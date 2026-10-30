@@ -143,7 +143,7 @@ Persona sweep explorer pages (atlas of dots coloured by category with an up/down
 table, manual label editing, CSV export, pause / resume), `viz/personas.py`.
 Keyword lists shorter than 8 in the brief were padded with 1 or 2 words (cat, Moon, knight, submarine, oak, smallpox).
 
-**Tests:** 140 pass / 2 skipped with the model; Persona tests (36 cases) including: a sweep killed part-way and resumed gives
+**Tests:** 140 pass / 2 skipped with the model; Persona tests (28 cases) including: a sweep killed part-way and resumed gives
 exactly the records of an uninterrupted sweep; the LLM judge is off unless both the key and the enable flag are set; the
 judge on hand-written replies (v1 and v2 behaviours).
 
