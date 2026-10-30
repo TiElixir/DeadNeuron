@@ -143,9 +143,9 @@ Persona sweep explorer pages (atlas of dots coloured by category with an up/down
 table, manual label editing, CSV export, pause / resume), `viz/personas.py`.
 Keyword lists shorter than 8 in the brief were padded with 1 or 2 words (cat, Moon, knight, submarine, oak, smallpox).
 
-**Tests:** 140 pass / 2 skipped with the model; 28 persona tests including: a sweep killed part-way and resumed gives
+**Tests:** 140 pass / 2 skipped with the model; Persona tests (36 cases) including: a sweep killed part-way and resumed gives
 exactly the records of an uninterrupted sweep; the LLM judge is off unless both the key and the enable flag are set; the
-judge on 17 hand-written replies.
+judge on hand-written replies (v1 and v2 behaviours).
 
 ### Ford persona search (real model; 11 training and 5 held-out questions; steering tested WITHOUT the persona prompt)
 
@@ -218,7 +218,7 @@ exotic objects. One prompt, one seed per neuron, greedy decoding, so these are s
 - Bugs found late: persona pages ignored the configured runs directory (fixed); `sequence_logprobs` materialised the whole
   vocabulary at every position and ran out of memory on 160-token replies (fixed, numbers unchanged, tested against the
   naive version).
-- Final test run: 140 passed, 2 skipped (with the real model); 111 passed without it.
+- Final test run: 140 passed, 2 skipped (with the real model); 122 passed, 20 skipped without it.
 
 ## Deviations from the brief (all)
 1. The model was not on disk, so after you said "download the model if needed" it was fetched once into `models/`
